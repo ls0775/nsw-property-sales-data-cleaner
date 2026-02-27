@@ -10,23 +10,35 @@ Basically:
 
 * Jupyter to do whatever analysis you want.
 
-The code is a hot mess, but gets the job done.
+The scripts are now structured to be safer and more repeatable, while keeping output files and schema unchanged.
 
 ## Install
 
-If you do code, you know what to do. If not, download Visual Studio Code and follow these prompts.
+Recommended with VS Code:
 
-* Install Python (if you have VS Code open, restart it or it won't recognise Python)
-* Copy this project to a folder
-* Open folder in VS Code
-* Open Terminal (CTRL+\`) to project folder, then create virual environment `py -3 -m venv .venv`
-* VS Code popup will appear asking if you want to switch to this new interpreter, say Yes (if no popup then Ctrl + P, then type 'Python: Select interpreter')
-* Open Terminal (CTRL+\`) and activate virtual environment `$ .venv\Scripts\activate.bat`
-* Upgrade pip in your virtual environment `(.venv)$ pip install --upgrade pip` (don't worry about the error)
-* Install requiremented packages in your virtual environment `(.venv)$ pip install -r requirements.txt`
-* Then open `1-download.py` then right-click > Run Python > Run Python in Terminal
-* Same for `2-extract`
-* Then open `analysis.ipynb` and run each cell to generate graphs or whatever
+* Install Python 3.10+
+* Copy/clone this project and open it in VS Code
+* In a terminal at the project root, create a virtual environment:
+	* Linux/macOS: `python3 -m venv .venv`
+	* Windows: `py -3 -m venv .venv`
+* Activate it:
+	* Linux/macOS: `source .venv/bin/activate`
+	* Windows (PowerShell): `.venv\Scripts\Activate.ps1`
+* Install dependencies: `pip install -r requirements.txt`
+
+## Run pipeline
+
+Run scripts in this order:
+
+1. `python 1-download.py`
+2. `python 2-extract.py`
+3. `python 3-archive.py`
+
+Outputs are:
+
+* `extract-3-very-clean.csv` (clean dataset used by notebook)
+* `nsw-property-sales-data-updatedYYYYMMDD.zip` (dated archive)
+* `archive.zip` (latest archive copy)
 
 ## Valuer General documentation
 

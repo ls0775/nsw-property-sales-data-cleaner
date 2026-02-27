@@ -1,11 +1,12 @@
 import logging
-import os
 import io
 import zipfile
 import csv
 import pandas as pd
 import time
+from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 # --- Constants ---
 DATA_DIR = "./data"
@@ -31,78 +32,88 @@ logging.basicConfig(
 )
 
 def extract_dat_lines_from_zip(zip_filepath):
-    """
-    Extracts all lines from .dat files found within a zip archive,
-    including those in nested zip files.
+    """Yields lines from .dat files in a zip file, including nested zip files."""
+    def decode_content(raw_content, source_label):
+        for encoding in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
+            try:
+                return raw_content.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        logging.warning(f"Skipping undecodable file content: {source_label}")
+        return None
 
-    Args:
-        zip_filepath (str): The path to the zip file.
+    def yield_lines_from_content(raw_content, source_label):
+        decoded = decode_content(raw_content, source_label)
+        if decoded is None:
+            return
+        for line in decoded.splitlines():
+            yield line
 
-    Returns:
-        list: A list of strings, where each string is a line from a .dat file.
-    """
-    dat_lines = []
+    def yield_dat_lines_from_nested_zip(raw_nested_zip, source_label):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw_nested_zip)) as nested_zip:
+                for nested_name in nested_zip.namelist():
+                    if nested_name.lower().endswith(".dat"):
+                        try:
+                            nested_content = nested_zip.read(nested_name)
+                            yield from yield_lines_from_content(nested_content, f"{source_label}:{nested_name}")
+                        except KeyError:
+                            logging.warning(f"Unable to read nested file: {source_label}:{nested_name}")
+        except zipfile.BadZipFile:
+            logging.warning(f"Skipping invalid nested zip: {source_label}")
+
     try:
         with zipfile.ZipFile(zip_filepath, 'r') as zip_file:
-            for file_info in zip_file.namelist():
-                # Process .dat files at the top level
-                if file_info.lower().endswith(".dat"):
+            for file_name in zip_file.namelist():
+                if file_name.lower().endswith(".dat"):
                     try:
-                        content = zip_file.read(file_info).decode("utf-8")
-                        dat_lines.extend(content.splitlines())
-                    except UnicodeDecodeError:
-                        logging.warning(f"Skipping file with encoding issues in {zip_filepath}: {file_info}")
-                # Process .dat files within nested zips
-                elif file_info.lower().endswith(".zip"):
-                    with zip_file.open(file_info) as inner_zip_file:
-                        with zipfile.ZipFile(io.BytesIO(inner_zip_file.read())) as inner_zip:
-                            for inner_file_info in inner_zip.namelist():
-                                if inner_file_info.lower().endswith(".dat"):
-                                    try:
-                                        content = inner_zip.read(inner_file_info).decode("utf-8")
-                                        dat_lines.extend(content.splitlines())
-                                    except UnicodeDecodeError:
-                                        logging.warning(f"Skipping file with encoding issues in nested zip {file_info}: {inner_file_info}")
+                        content = zip_file.read(file_name)
+                        yield from yield_lines_from_content(content, f"{zip_filepath}:{file_name}")
+                    except KeyError:
+                        logging.warning(f"Unable to read file in archive {zip_filepath}: {file_name}")
+                elif file_name.lower().endswith(".zip"):
+                    try:
+                        with zip_file.open(file_name) as nested_zip_file:
+                            nested_zip_content = nested_zip_file.read()
+                            yield from yield_dat_lines_from_nested_zip(nested_zip_content, f"{zip_filepath}:{file_name}")
+                    except zipfile.BadZipFile:
+                        logging.warning(f"Skipping invalid nested zip in {zip_filepath}: {file_name}")
+                    except KeyError:
+                        logging.warning(f"Unable to open nested zip in {zip_filepath}: {file_name}")
     except FileNotFoundError:
         logging.error(f"File not found: {zip_filepath}")
     except zipfile.BadZipFile:
         logging.error(f"Bad zip file: {zip_filepath}")
-    return dat_lines
 
 def parse_data_lines(lines):
-    """
-    Parses a list of raw data lines, identifying and processing both current
-    and archived formats.
-
-    Args:
-        lines (list): A list of strings from the .dat files.
-
-    Returns:
-        list: A list of dictionaries, where each dictionary represents a processed record.
-    """
+    """Parses raw PSI lines into records and returns (records, total_lines_seen)."""
     processed_records = []
-    legal_descriptions = {} # For matching 'C' records to 'B' records in current format
+    legal_descriptions = {}
+    pending_current_records = defaultdict(list)
+    line_count = 0
 
-    # First pass: Collect all legal descriptions from 'C' records
     for line in lines:
+        line_count += 1
+        line = line.strip()
+        if not line:
+            continue
+
         if line.startswith("C;"):
-            parts = line.split(";")
+            parts = [p.strip() for p in line.split(";")]
             if len(parts) >= 6:
-                # Create a unique key for the C record based on its identifying parts
-                key = (parts[1], parts[2], parts[3]) # District, Property ID, Sale counter
-                legal_descriptions[key] = parts[5].strip()
+                key = (parts[1], parts[2], parts[3])
+                legal_descriptions[key] = parts[5]
+                if key in pending_current_records:
+                    for pending_record in pending_current_records.pop(key):
+                        pending_record["Property legal description"] = parts[5]
+            continue
 
-    # Second pass: Process 'B' records and add legal descriptions
-    for line in lines:
         if not line.startswith("B;"):
             continue
 
         parts = [p.strip() for p in line.split(";")]
-        
-        # Heuristic to differentiate between formats:
-        # The archived format has a source like 'ARCHIVE' or 'VALNET1' in the 3rd field.
-        # The current format has a numeric Property ID.
-        is_archived = len(parts) > 2 and parts[2].isalpha()
+
+        is_archived = len(parts) > 2 and not parts[2].isdigit()
 
         record = None
         if is_archived:
@@ -110,19 +121,20 @@ def parse_data_lines(lines):
         else:
             record = parse_current_record(parts)
             if record:
-                # Match legal description for current format records
                 key = (record.get("District code"), record.get("Property ID"), record.get("Sale counter"))
                 if key in legal_descriptions:
                     record["Property legal description"] = legal_descriptions[key]
+                else:
+                    pending_current_records[key].append(record)
         
         if record:
             processed_records.append(record)
 
-    return processed_records
+    return processed_records, line_count
 
 def parse_current_record(parts):
     """Parses a 'B' record from the current data format."""
-    if len(parts) < 25:
+    if len(parts) < 24:
         return None
     return {
         "District code": parts[1],
@@ -153,14 +165,11 @@ def parse_archived_record(parts):
     if len(parts) < 18:
         return None
     
-    # As noted, archived dates are DD/MM/YYYY. We convert them to YYYYMMDD for consistency.
     contract_date_str = ""
     try:
-        # Handles 'dd/mm/yyyy'
         contract_date = datetime.strptime(parts[10], "%d/%m/%Y")
         contract_date_str = contract_date.strftime("%Y%m%d")
     except ValueError:
-        # Handles 'CCYYMMDD' if it appears in archived data, or invalid formats
         contract_date_str = parts[10]
 
     return {
@@ -202,48 +211,36 @@ def create_and_clean_dataframe(records):
 
     df = pd.DataFrame(records)
 
-    # --- Data Type Conversion and Cleaning ---
-    
-    # Convert date columns, coercing errors to NaT (Not a Time)
     df['Contract date'] = pd.to_datetime(df['Contract date'], format='%Y%m%d', errors='coerce')
     df['Settlement date'] = pd.to_datetime(df['Settlement date'], format='%Y%m%d', errors='coerce')
 
-    # Convert numeric columns, coercing errors to NaN (Not a Number)
     numeric_cols = ['Purchase price', 'Area', 'Property post code']
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # --- Data Transformation ---
-
-    # Remove records with a future contract date if enabled
     if FILTER_FUTURE_DATES:
-        today = pd.to_datetime('today').normalize() # Get today's date with time set to 00:00:00
+        today = pd.to_datetime('today').normalize()
         original_count = len(df)
-        df = df[df['Contract date'] <= today]
+        df = df[df['Contract date'] <= today].copy()
         removed_count = original_count - len(df)
         if removed_count > 0:
             logging.info(f"Removed {removed_count} records with future contract dates.")
 
-    # Remove records with a contract date before EARLIEST_DATE if enabled
     if FILTER_PRE_1990_DATES:
         earliest_date = pd.to_datetime(EARLIEST_DATE).normalize()
         original_count = len(df)
-        # Keep rows where the date is >= earliest_date OR where the date is NaT (not a time/null)
-        df = df[(df['Contract date'] >= earliest_date) | (df['Contract date'].isna())]
+        df = df[(df['Contract date'] >= earliest_date) | (df['Contract date'].isna())].copy()
         removed_count = original_count - len(df)
         if removed_count > 0:
             logging.info(f"Removed {removed_count} records with contract dates before {EARLIEST_DATE}.")
 
-    # Adjust area for Hectares (H) to square meters
-    # Ensure 'Area' is numeric before performing calculation
+    df['Area type'] = df['Area type'].astype('string').str.strip().str.upper()
     df.loc[df['Area type'] == 'H', 'Area'] = df['Area'] * 10000
 
-    # Capitalize string fields for consistency
     string_cols = ['Property name', 'Property street name', 'Property locality', 'Primary purpose']
     for col in string_cols:
-        df[col] = df[col].str.title()
-        
-    # Reorder columns for final output
+        df[col] = df[col].astype('string').str.strip().str.title()
+
     final_columns = [
         "Property ID", "Sale counter", "Download date / time", "Property name", 
         "Property unit number", "Property house number", "Property street name", 
@@ -252,7 +249,6 @@ def create_and_clean_dataframe(records):
         "Nature of property", "Primary purpose", "Strata lot number", 
         "Dealing number", "Property legal description"
     ]
-    # Ensure all final columns exist, filling missing ones with None
     for col in final_columns:
         if col not in df.columns:
             df[col] = None
@@ -264,30 +260,32 @@ def main():
     start_time = time.time()
     logging.info('Start: Extracting and processing data.')
 
-    # 1. Extraction
-    all_dat_lines = []
-    for file_name in os.listdir(DATA_DIR):
-        if file_name.lower().endswith(".zip"):
-            zip_filepath = os.path.join(DATA_DIR, file_name)
-            logging.info(f"Extracting from: {zip_filepath}")
-            all_dat_lines.extend(extract_dat_lines_from_zip(zip_filepath))
-    
-    logging.info(f"Extraction complete. Found {len(all_dat_lines)} total lines.")
-    logging.info(f"{int(time.time() - start_time)} seconds elapsed.")
+    data_dir = Path(DATA_DIR)
+    if not data_dir.exists():
+        logging.error(f"Data directory not found: {DATA_DIR}")
+        return
 
-    # 2. Parsing
-    logging.info("Begin: Parsing raw data lines.")
-    processed_records = parse_data_lines(all_dat_lines)
+    zip_files = sorted(data_dir.glob("*.zip"))
+    processed_records = []
+    total_lines = 0
+
+    logging.info("Begin: Extracting and parsing zip files.")
+    for zip_filepath in zip_files:
+        logging.info(f"Extracting from: {zip_filepath}")
+        parsed_records, file_line_count = parse_data_lines(extract_dat_lines_from_zip(zip_filepath))
+        total_lines += file_line_count
+        if parsed_records:
+            processed_records.extend(parsed_records)
+
+    logging.info(f"Extraction complete. Found {total_lines} total lines.")
     logging.info(f"Parsing complete. Found {len(processed_records)} property records.")
     logging.info(f"{int(time.time() - start_time)} seconds elapsed.")
 
-    # 3. DataFrame Creation and Cleaning
     logging.info("Begin: Creating and cleaning DataFrame.")
     df = create_and_clean_dataframe(processed_records)
     logging.info("DataFrame processing complete.")
     logging.info(f"{int(time.time() - start_time)} seconds elapsed.")
 
-    # 4. Exporting to CSV
     if not df.empty:
         logging.info(f"Begin: Exporting {len(df)} records to {FINAL_CSV_PATH}")
         df.to_csv(FINAL_CSV_PATH, index=False, quoting=csv.QUOTE_ALL)

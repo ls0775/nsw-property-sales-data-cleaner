@@ -1,26 +1,34 @@
 import logging
 import time
-import os
 import zipfile
 from datetime import datetime
+from pathlib import Path
+import shutil
+
 #
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.FileHandler("propsales.log"), logging.StreamHandler()])
 
-logging.info('Creating zip archive')
-start = time.time()
+def main():
+	logging.info('Creating zip archive')
+	start = time.time()
 
-name_original = 'extract-3-very-clean.csv'
-name_new = 'nsw-property-sales-data-updated' + datetime.now().strftime('%Y%m%d')
+	name_original = Path('extract-3-very-clean.csv')
+	name_new = 'nsw-property-sales-data-updated' + datetime.now().strftime('%Y%m%d')
+	dated_csv_name = name_new + '.csv'
+	dated_zip = Path(name_new + '.zip')
+	archive_zip = Path('archive.zip')
 
-os.rename(name_original, name_new + '.csv')
+	if not name_original.exists():
+		raise FileNotFoundError(f"Expected file not found: {name_original}")
 
-zipfile.ZipFile(name_new + '.zip', mode='w').write(name_new + ".csv", compress_type=zipfile.ZIP_DEFLATED)
+	with zipfile.ZipFile(dated_zip, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
+		zip_file.write(name_original, arcname=dated_csv_name)
 
-os.rename(name_new + '.csv', name_original)
+	shutil.copy2(dated_zip, archive_zip)
 
-# Also create a generic a copy that doesn't have the date attached
-os.system('cp ' + name_new + '.zip' + ' ' + 'archive.zip') 
+	logging.info("Complete: zip archive has been created.")
+	logging.info('Total elapsed time was ' + str(int(time.time() - start)) + " seconds")
 
-logging.info("Complete: zip archive has been created.")
-logging.info('Total elapsed time was ' + str(int(time.time() - start)) + " seconds")
+if __name__ == "__main__":
+	main()
