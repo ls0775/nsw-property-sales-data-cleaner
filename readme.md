@@ -33,12 +33,20 @@ Run scripts in this order:
 1. `python 1-download.py`
 2. `python 2-extract.py`
 3. `python 3-archive.py`
+4. `python 4-Transform.py`
+
+`2-extract.py` now saves progress to `extract-progress.json` and resumes from the last completed zip file after interruption.
+If zip inputs change between runs, it automatically rebuilds from scratch to avoid duplicate or inconsistent rows.
 
 Outputs are:
 
 * `extract-3-very-clean.csv` (clean dataset used by notebook)
+* `extract-3-very-clean.parquet` (Parquet version for faster/lower-memory analytics)
+* `extract-progress.json` (resume/checkpoint cache for extraction)
 * `nsw-property-sales-data-updatedYYYYMMDD.zip` (dated archive)
 * `archive.zip` (latest archive copy)
+
+For parquet-based analysis, use `analysis-parquet.ipynb`.
 
 ## Valuer General documentation
 

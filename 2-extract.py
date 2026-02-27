@@ -2,6 +2,7 @@ import logging
 import io
 import zipfile
 import csv
+import json
 import pandas as pd
 import time
 from collections import defaultdict
@@ -12,6 +13,7 @@ from pathlib import Path
 DATA_DIR = "./data"
 FINAL_CSV_PATH = "extract-3-very-clean.csv"
 LOG_FILE_PATH = "propsales.log"
+PROGRESS_FILE_PATH = "extract-progress.json"
 # --- Filtering Controls ---
 # Set to True to remove records with contract dates in the future
 FILTER_FUTURE_DATES = True
@@ -30,6 +32,84 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+def get_zip_signature(zip_filepath):
+    """Returns a stable signature for a zip file based on size and mtime."""
+    stat_info = zip_filepath.stat()
+    return {
+        "size": stat_info.st_size,
+        "mtime_ns": stat_info.st_mtime_ns,
+    }
+
+def load_progress_state(progress_path, output_path, zip_files):
+    """Loads cached extraction progress and validates it against current zip files."""
+    empty_state = {
+        "version": 1,
+        "csv_header_written": False,
+        "processed_zips": {}
+    }
+
+    if not progress_path.exists():
+        if output_path.exists():
+            logging.warning(
+                f"Found existing output {output_path} without {progress_path}; "
+                "starting full rebuild to avoid duplicate rows."
+            )
+        return empty_state, False
+
+    try:
+        loaded_state = json.loads(progress_path.read_text(encoding='utf-8'))
+    except (json.JSONDecodeError, OSError) as exc:
+        logging.warning(f"Unable to read progress file {progress_path}: {exc}. Starting full rebuild.")
+        return empty_state, False
+
+    processed_zips = loaded_state.get("processed_zips")
+    if not isinstance(processed_zips, dict):
+        logging.warning(f"Invalid progress file format in {progress_path}. Starting full rebuild.")
+        return empty_state, False
+
+    if not output_path.exists():
+        if processed_zips:
+            logging.warning(
+                f"Progress file {progress_path} exists but output {output_path} is missing; "
+                "starting full rebuild."
+            )
+        return empty_state, False
+
+    zip_file_map = {zip_file.name: zip_file for zip_file in zip_files}
+    for zip_name, cached in processed_zips.items():
+        zip_path = zip_file_map.get(zip_name)
+        if zip_path is None:
+            logging.warning(
+                f"Progress references missing zip {zip_name}; starting full rebuild for consistency."
+            )
+            return empty_state, False
+
+        current_sig = get_zip_signature(zip_path)
+        if (
+            cached.get("size") != current_sig["size"] or
+            cached.get("mtime_ns") != current_sig["mtime_ns"]
+        ):
+            logging.warning(
+                f"Zip changed since last run ({zip_name}); starting full rebuild for consistency."
+            )
+            return empty_state, False
+
+    normalized_state = {
+        "version": 1,
+        "csv_header_written": bool(
+            loaded_state.get("csv_header_written", output_path.stat().st_size > 0)
+        ),
+        "processed_zips": processed_zips
+    }
+    should_resume = bool(processed_zips)
+    return normalized_state, should_resume
+
+def save_progress_state(progress_path, state):
+    """Persists extraction progress atomically."""
+    tmp_path = progress_path.with_suffix(progress_path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(state, indent=2), encoding='utf-8')
+    tmp_path.replace(progress_path)
 
 def extract_dat_lines_from_zip(zip_filepath):
     """Yields lines from .dat files in a zip file, including nested zip files."""
@@ -261,35 +341,102 @@ def main():
     logging.info('Start: Extracting and processing data.')
 
     data_dir = Path(DATA_DIR)
+    output_path = Path(FINAL_CSV_PATH)
+    progress_path = Path(PROGRESS_FILE_PATH)
+
     if not data_dir.exists():
         logging.error(f"Data directory not found: {DATA_DIR}")
         return
 
     zip_files = sorted(data_dir.glob("*.zip"))
-    processed_records = []
     total_lines = 0
+    total_parsed_records = 0
+    total_exported_records = 0
+
+    progress_state, should_resume = load_progress_state(progress_path, output_path, zip_files)
+    if should_resume:
+        logging.info(
+            f"Resuming from cached progress: {len(progress_state['processed_zips'])} zip files already completed."
+        )
+    else:
+        progress_state = {
+            "version": 1,
+            "csv_header_written": False,
+            "processed_zips": {}
+        }
+        if output_path.exists():
+            output_path.unlink()
+        save_progress_state(progress_path, progress_state)
+
+    csv_header_written = (
+        progress_state["csv_header_written"] and
+        output_path.exists() and
+        output_path.stat().st_size > 0
+    )
+    processed_zips = progress_state["processed_zips"]
 
     logging.info("Begin: Extracting and parsing zip files.")
     for zip_filepath in zip_files:
+        current_sig = get_zip_signature(zip_filepath)
+        cached = processed_zips.get(zip_filepath.name)
+        if (
+            cached and
+            cached.get("size") == current_sig["size"] and
+            cached.get("mtime_ns") == current_sig["mtime_ns"]
+        ):
+            total_lines += int(cached.get("line_count", 0))
+            total_parsed_records += int(cached.get("parsed_records", 0))
+            total_exported_records += int(cached.get("exported_records", 0))
+            logging.info(f"Skipping already processed: {zip_filepath}")
+            continue
+
         logging.info(f"Extracting from: {zip_filepath}")
         parsed_records, file_line_count = parse_data_lines(extract_dat_lines_from_zip(zip_filepath))
         total_lines += file_line_count
-        if parsed_records:
-            processed_records.extend(parsed_records)
+        total_parsed_records += len(parsed_records)
+
+        exported_records = 0
+
+        if not parsed_records:
+            logging.info(f"No records parsed from {zip_filepath}; skipping export for this file.")
+        else:
+            df = create_and_clean_dataframe(parsed_records)
+            if df.empty:
+                logging.info(f"No rows remaining after cleaning for {zip_filepath}; skipping export.")
+            else:
+                df.to_csv(
+                    FINAL_CSV_PATH,
+                    mode='a',
+                    header=not csv_header_written,
+                    index=False,
+                    quoting=csv.QUOTE_ALL
+                )
+                csv_header_written = True
+                exported_records = len(df)
+                total_exported_records += exported_records
+
+        processed_zips[zip_filepath.name] = {
+            "size": current_sig["size"],
+            "mtime_ns": current_sig["mtime_ns"],
+            "line_count": file_line_count,
+            "parsed_records": len(parsed_records),
+            "exported_records": exported_records,
+            "completed_at": datetime.utcnow().isoformat() + "Z"
+        }
+        progress_state["csv_header_written"] = csv_header_written
+        save_progress_state(progress_path, progress_state)
+
+        logging.info(
+            f"Completed {zip_filepath}: {file_line_count} lines, "
+            f"{len(parsed_records)} parsed, {exported_records} exported."
+        )
 
     logging.info(f"Extraction complete. Found {total_lines} total lines.")
-    logging.info(f"Parsing complete. Found {len(processed_records)} property records.")
+    logging.info(f"Parsing complete. Found {total_parsed_records} property records.")
+    logging.info(f"Export complete. Wrote {total_exported_records} records to {FINAL_CSV_PATH}.")
     logging.info(f"{int(time.time() - start_time)} seconds elapsed.")
 
-    logging.info("Begin: Creating and cleaning DataFrame.")
-    df = create_and_clean_dataframe(processed_records)
-    logging.info("DataFrame processing complete.")
-    logging.info(f"{int(time.time() - start_time)} seconds elapsed.")
-
-    if not df.empty:
-        logging.info(f"Begin: Exporting {len(df)} records to {FINAL_CSV_PATH}")
-        df.to_csv(FINAL_CSV_PATH, index=False, quoting=csv.QUOTE_ALL)
-    else:
+    if not csv_header_written:
         logging.warning("No data to export; the final CSV file will not be created.")
 
     logging.info("Complete: Data has been extracted and processed.")
