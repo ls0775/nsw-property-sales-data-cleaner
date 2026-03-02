@@ -25,7 +25,9 @@ def main():
 	with zipfile.ZipFile(dated_zip, mode='w', compression=zipfile.ZIP_DEFLATED) as zip_file:
 		zip_file.write(name_original, arcname=dated_csv_name)
 
-	shutil.copy2(dated_zip, archive_zip)
+	archive_zip_tmp = archive_zip.with_suffix('.zip.tmp')
+	shutil.copy2(dated_zip, archive_zip_tmp)
+	archive_zip_tmp.replace(archive_zip)
 
 	logging.info("Complete: zip archive has been created.")
 	logging.info('Total elapsed time was ' + str(int(time.time() - start)) + " seconds")

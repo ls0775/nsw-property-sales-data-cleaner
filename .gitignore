@@ -10,4 +10,8 @@ extract-*.txt
 data/
 property-sales-data-*
 nsw-property-sales-data-*.zip
+archive.zip
+extract-progress.json
+*.parquet
+*.parquet.part-*
 *.log
