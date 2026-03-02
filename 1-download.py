@@ -13,7 +13,7 @@ import zipfile
 URL_BASE = 'https://www.valuergeneral.nsw.gov.au/__psi/'
 WEEKLY_URL = URL_BASE + 'weekly/'
 YEARLY_URL = URL_BASE + 'yearly/'
-DOWNLOAD_DIR = 'data/'
+DOWNLOAD_DIR = 'data1/'
 YEARS_TO_COLLECT = 35
 RECENT_WEEKS_TO_EXCLUDE = 14  # Number of days to exclude from recent weekly downloads.
 RETRY_ATTEMPTS = 3

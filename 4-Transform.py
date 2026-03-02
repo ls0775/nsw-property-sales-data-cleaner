@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
-INPUT_CSV_PATH = Path("extract-3-very-clean.csv")
-OUTPUT_PARQUET_PATH = Path("extract-3-very-clean.parquet")
+INPUT_CSV_PATH = Path("data2/extract-3-very-clean.csv")
+OUTPUT_PARQUET_PATH = Path("data4/extract-3-very-clean.parquet")
 LOG_FILE_PATH = Path("propsales.log")
 CHUNK_SIZE = 250_000
 
@@ -97,6 +97,7 @@ def main():
 
     parquet_schema = build_parquet_schema(pa)
 
+    OUTPUT_PARQUET_PATH.parent.mkdir(parents=True, exist_ok=True)
     temp_output = OUTPUT_PARQUET_PATH.with_suffix(".parquet.tmp")
     if temp_output.exists():
         temp_output.unlink()

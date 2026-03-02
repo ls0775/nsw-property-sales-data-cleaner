@@ -13,11 +13,14 @@ def main():
 	logging.info('Creating zip archive')
 	start = time.time()
 
-	name_original = Path('extract-3-very-clean.csv')
+	output_dir = Path('data3')
+	output_dir.mkdir(parents=True, exist_ok=True)
+
+	name_original = Path('data2/extract-3-very-clean.csv')
 	name_new = 'nsw-property-sales-data-updated' + datetime.now().strftime('%Y%m%d')
 	dated_csv_name = name_new + '.csv'
-	dated_zip = Path(name_new + '.zip')
-	archive_zip = Path('archive.zip')
+	dated_zip = output_dir / (name_new + '.zip')
+	archive_zip = output_dir / 'archive.zip'
 
 	if not name_original.exists():
 		raise FileNotFoundError(f"Expected file not found: {name_original}")

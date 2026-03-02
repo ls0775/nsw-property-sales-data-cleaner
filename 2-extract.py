@@ -10,10 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 # --- Constants ---
-DATA_DIR = "./data"
-FINAL_CSV_PATH = "extract-3-very-clean.csv"
+DATA_DIR = "./data1"
+FINAL_CSV_PATH = "data2/extract-3-very-clean.csv"
 LOG_FILE_PATH = "propsales.log"
-PROGRESS_FILE_PATH = "extract-progress.json"
+PROGRESS_FILE_PATH = "data2/extract-progress.json"
 # --- Filtering Controls ---
 # Set to True to remove records with contract dates in the future
 FILTER_FUTURE_DATES = True
@@ -343,6 +343,7 @@ def main():
     data_dir = Path(DATA_DIR)
     output_path = Path(FINAL_CSV_PATH)
     progress_path = Path(PROGRESS_FILE_PATH)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not data_dir.exists():
         logging.error(f"Data directory not found: {DATA_DIR}")

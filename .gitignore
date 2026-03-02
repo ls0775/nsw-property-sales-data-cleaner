@@ -8,6 +8,10 @@ extract-*.txt
 *.html
 .vscode/settings.json
 data/
+data1/
+data2/
+data3/
+data4/
 property-sales-data-*
 nsw-property-sales-data-*.zip
 archive.zip
