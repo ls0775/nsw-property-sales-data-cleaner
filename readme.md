@@ -35,18 +35,29 @@ Run scripts in this order:
 3. `python 3-archive.py`
 4. `python 4-Transform.py`
 
-`2-extract.py` now saves progress to `extract-progress.json` and resumes from the last completed zip file after interruption.
+Each script reads from and writes to its own numbered directory, keeping pipeline stages cleanly separated:
+
+| Script | Reads from | Writes to |
+|---|---|---|
+| `1-download.py` | — | `data1/` |
+| `2-extract.py` | `data1/` | `data2/` |
+| `3-archive.py` | `data2/` | `data3/` |
+| `4-Transform.py` | `data2/` | `data4/` |
+
+All `data1/` through `data4/` directories are created automatically and excluded from version control.
+
+`2-extract.py` saves progress to `data2/extract-progress.json` and resumes from the last completed zip file after interruption.
 If zip inputs change between runs, it automatically rebuilds from scratch to avoid duplicate or inconsistent rows.
 
 Outputs are:
 
-* `extract-3-very-clean.csv` (clean dataset used by notebook)
-* `extract-3-very-clean.parquet` (Parquet version for faster/lower-memory analytics)
-* `extract-progress.json` (resume/checkpoint cache for extraction)
-* `nsw-property-sales-data-updatedYYYYMMDD.zip` (dated archive)
-* `archive.zip` (latest archive copy)
+* `data2/extract-3-very-clean.csv` (clean dataset used by notebooks and archiving)
+* `data2/extract-progress.json` (resume/checkpoint cache for extraction)
+* `data3/archive.zip` (latest archive copy)
+* `data3/nsw-property-sales-data-updatedYYYYMMDD.zip` (dated archive snapshot)
+* `data4/extract-3-very-clean.parquet` (Parquet version for faster/lower-memory analytics)
 
-For parquet-based analysis, use `analysis-parquet.ipynb`.
+For parquet-based analysis, use `analysis-parquet.ipynb` (reads from `data4/extract-3-very-clean.parquet`).
 
 ## Valuer General documentation
 
