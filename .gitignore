@@ -8,6 +8,9 @@ extract-*.txt
 *.html
 .vscode/settings.json
 data/
+output/
+archive.zip
+geocode_cache.csv
 property-sales-data-*
 nsw-property-sales-data-*.zip
 *.log

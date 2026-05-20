@@ -99,10 +99,9 @@ def parse_data_lines(lines):
 
         parts = [p.strip() for p in line.split(";")]
         
-        # Heuristic to differentiate between formats:
-        # The archived format has a source like 'ARCHIVE' or 'VALNET1' in the 3rd field.
-        # The current format has a numeric Property ID.
-        is_archived = len(parts) > 2 and parts[2].isalpha()
+        # Current format has a numeric Property ID in parts[2]; archived format has a text
+        # source code (e.g. "ARCHIVE", "VALNET1") which is never purely numeric.
+        is_archived = len(parts) > 2 and not parts[2].isdigit()
 
         record = None
         if is_archived:
@@ -215,11 +214,11 @@ def create_and_clean_dataframe(records):
 
     # --- Data Transformation ---
 
-    # Remove records with a future contract date if enabled
+    # Remove records with a future contract date if enabled; preserve NaT rows (unparseable dates)
     if FILTER_FUTURE_DATES:
-        today = pd.to_datetime('today').normalize() # Get today's date with time set to 00:00:00
+        today = pd.to_datetime('today').normalize()
         original_count = len(df)
-        df = df[df['Contract date'] <= today]
+        df = df[(df['Contract date'] <= today) | (df['Contract date'].isna())]
         removed_count = original_count - len(df)
         if removed_count > 0:
             logging.info(f"Removed {removed_count} records with future contract dates.")
@@ -234,22 +233,30 @@ def create_and_clean_dataframe(records):
         if removed_count > 0:
             logging.info(f"Removed {removed_count} records with contract dates before {EARLIEST_DATE}.")
 
-    # Adjust area for Hectares (H) to square meters
-    # Ensure 'Area' is numeric before performing calculation
-    df.loc[df['Area type'] == 'H', 'Area'] = df['Area'] * 10000
+    # Convert hectares to square metres
+    h_mask = df['Area type'] == 'H'
+    df.loc[h_mask, 'Area'] = df.loc[h_mask, 'Area'] * 10000
 
     # Capitalize string fields for consistency
     string_cols = ['Property name', 'Property street name', 'Property locality', 'Primary purpose']
     for col in string_cols:
         df[col] = df[col].str.title()
         
+    # Deduplicate: yearly and weekly zip files can overlap for the same period
+    dedup_cols = ['District code', 'Property ID', 'Contract date', 'Purchase price']
+    original_count = len(df)
+    df = df.drop_duplicates(subset=dedup_cols)
+    removed_count = original_count - len(df)
+    if removed_count > 0:
+        logging.info(f"Removed {removed_count} duplicate records.")
+
     # Reorder columns for final output
     final_columns = [
-        "Property ID", "Sale counter", "Download date / time", "Property name", 
-        "Property unit number", "Property house number", "Property street name", 
-        "Property locality", "Property post code", "Area", "Area type", 
-        "Contract date", "Settlement date", "Purchase price", "Zoning", 
-        "Nature of property", "Primary purpose", "Strata lot number", 
+        "District code", "Property ID", "Sale counter", "Download date / time", "Property name",
+        "Property unit number", "Property house number", "Property street name",
+        "Property locality", "Property post code", "Area", "Area type",
+        "Contract date", "Settlement date", "Purchase price", "Zoning",
+        "Nature of property", "Primary purpose", "Strata lot number",
         "Dealing number", "Property legal description"
     ]
     # Ensure all final columns exist, filling missing ones with None
@@ -266,7 +273,7 @@ def main():
 
     # 1. Extraction
     all_dat_lines = []
-    for file_name in os.listdir(DATA_DIR):
+    for file_name in sorted(os.listdir(DATA_DIR)):
         if file_name.lower().endswith(".zip"):
             zip_filepath = os.path.join(DATA_DIR, file_name)
             logging.info(f"Extracting from: {zip_filepath}")

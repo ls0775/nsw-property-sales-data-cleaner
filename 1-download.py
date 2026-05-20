@@ -11,7 +11,7 @@ WEEKLY_URL = URL_BASE + 'weekly/'
 YEARLY_URL = URL_BASE + 'yearly/'
 DOWNLOAD_DIR = 'data/'
 YEARS_TO_COLLECT = 35
-RECENT_WEEKS_TO_EXCLUDE = 14  # Number of days to exclude from recent weekly downloads.
+RECENT_DAYS_TO_EXCLUDE = 14  # Number of recent days to exclude from weekly downloads.
 RETRY_ATTEMPTS = 3
 
 # Configure logging
@@ -27,22 +27,30 @@ def download_file(url, filepath):
             return True
         except (URLError, HTTPError) as e:
             logging.error(f'Error downloading {url} (attempt {attempt + 1}): {e}')
+            if os.path.exists(filepath):
+                os.remove(filepath)  # remove partial file so skip-if-exists won't hide the failure
             if attempt < RETRY_ATTEMPTS - 1:
                 time.sleep(5)  # Wait before retrying
             else:
                 return False
         except Exception as e:
             logging.error(f'An unexpected error occurred during download {url} : {e}')
+            if os.path.exists(filepath):
+                os.remove(filepath)
             return False
     return False
 
 def download_weekly_data(start_date, end_date):
     """Downloads weekly data files."""
-    end_date = end_date - timedelta(days=RECENT_WEEKS_TO_EXCLUDE)
+    end_date = end_date - timedelta(days=RECENT_DAYS_TO_EXCLUDE)
     current_date = start_date
     while current_date < end_date:
         filename = current_date.strftime('%Y%m%d') + '.zip'
         filepath = os.path.join(DOWNLOAD_DIR, filename)
+        if os.path.exists(filepath):
+            logging.info(f'Skipping {filepath}, already exists.')
+            current_date += timedelta(days=7)
+            continue
         url = WEEKLY_URL + filename
         download_file(url, filepath)
         current_date += timedelta(days=7)
@@ -52,6 +60,9 @@ def download_yearly_data(start_year, end_year):
     for year in range(start_year, end_year):
         filename = str(year) + '.zip'
         filepath = os.path.join(DOWNLOAD_DIR, filename)
+        if os.path.exists(filepath):
+            logging.info(f'Skipping {filepath}, already exists.')
+            continue
         url = YEARLY_URL + filename
         download_file(url, filepath)
 
@@ -65,7 +76,9 @@ def main():
         logging.info(f"Created directory: {DOWNLOAD_DIR}")
 
     today = date.today()
-    start_weekly_date = date(today.year, 1, 7) - timedelta(days=date(today.year, 1, 7).weekday())
+    # First Monday of the current year (weekly files are Monday-dated)
+    jan7 = date(today.year, 1, 7)
+    start_weekly_date = jan7 - timedelta(days=jan7.weekday())
     end_weekly_date = today
 
     download_weekly_data(start_weekly_date, end_weekly_date)
