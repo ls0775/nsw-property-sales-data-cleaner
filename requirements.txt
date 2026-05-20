@@ -4,4 +4,6 @@ plotly.express
 numpy
 matplotlib
 geopy
+jupyterlab
+ipykernel
 pytest

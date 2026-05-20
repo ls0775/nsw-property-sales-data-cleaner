@@ -64,6 +64,26 @@ Re-running step 1 skips files that already exist. Re-running step 3 removes the 
 
 ## Analysis notebook
 
+### Setup (first time only)
+
+```bash
+# Install jupyter into the venv
+.venv/bin/pip install jupyterlab
+
+# Register the venv as a named kernel
+.venv/bin/python -m ipykernel install --user --name nsw-property-sales --display-name "NSW Property Sales"
+```
+
+### Launch
+
+```bash
+.venv/bin/jupyter lab analysis.ipynb
+```
+
+When JupyterLab opens, confirm the kernel in the top-right corner shows **NSW Property Sales**. If not, click it and switch. Run cells with **Shift+Enter**, or use **Run → Run All Cells**.
+
+### Sections
+
 `analysis.ipynb` contains two sections:
 
 ### Area analysis (existing)
